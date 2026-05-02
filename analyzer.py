@@ -1,5 +1,7 @@
 import requests
 import os
+import re
+from collections import Counter
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -16,6 +18,29 @@ def get_repo_tree(owner: str, repo: str) -> list:
     tree = response.json().get("tree", [])
     return [item["path"] for item in tree if item["type"] == "blob"]
 
+def get_repo_metadata(owner: str, repo: str) -> dict:
+    """Fetch repository metadata from GitHub API."""
+    headers = {"Authorization": f"token {GITHUB_TOKEN}"} if GITHUB_TOKEN else {}
+    url = f"https://api.github.com/repos/{owner}/{repo}"
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            return {
+                "description": data.get("description", ""),
+                "language": data.get("language", ""),
+                "stars": data.get("stargazers_count", 0),
+                "forks": data.get("forks_count", 0),
+                "topics": data.get("topics", []),
+                "created_at": data.get("created_at", ""),
+                "updated_at": data.get("updated_at", ""),
+                "size": data.get("size", 0),
+                "open_issues": data.get("open_issues_count", 0)
+            }
+    except:
+        pass
+    return {}
+
 def get_file_content(owner: str, repo: str, path: str) -> str:
     """Fetch content of a specific file from GitHub."""
     headers = {"Authorization": f"token {GITHUB_TOKEN}"} if GITHUB_TOKEN else {}
@@ -30,27 +55,188 @@ def get_file_content(owner: str, repo: str, path: str) -> str:
     except:
         return ""
 
+def analyze_file_structure(file_list: list) -> dict:
+    """Analyze repository structure and patterns."""
+    extensions = Counter()
+    directories = set()
+    
+    for file_path in file_list:
+        # Count extensions
+        if "." in file_path:
+            ext = file_path.split(".")[-1]
+            extensions[ext] += 1
+        
+        # Track directories
+        if "/" in file_path:
+            dirs = file_path.split("/")[:-1]
+            for i in range(len(dirs)):
+                directories.add("/".join(dirs[:i+1]))
+    
+    # Detect patterns
+    has_tests = any("test" in f.lower() for f in file_list)
+    has_docs = any("doc" in f.lower() or "readme" in f.lower() for f in file_list)
+    has_ci = any(".github" in f or ".gitlab" in f or "jenkins" in f.lower() for f in file_list)
+    has_docker = any("docker" in f.lower() for f in file_list)
+    has_api = any("api" in f.lower() or "endpoint" in f.lower() for f in file_list)
+    has_frontend = any(ext in ["js", "jsx", "ts", "tsx", "vue", "html", "css"] for ext in extensions.keys())
+    has_backend = any(ext in ["py", "java", "go", "rb", "php"] for ext in extensions.keys())
+    
+    return {
+        "extensions": dict(extensions.most_common(10)),
+        "total_directories": len(directories),
+        "has_tests": has_tests,
+        "has_docs": has_docs,
+        "has_ci": has_ci,
+        "has_docker": has_docker,
+        "has_api": has_api,
+        "has_frontend": has_frontend,
+        "has_backend": has_backend,
+        "top_directories": sorted(list(directories))[:15]
+    }
+
+def extract_dependencies(file_list: list, owner: str, repo: str) -> dict:
+    """Extract dependencies from various package files."""
+    deps = {"languages": [], "frameworks": [], "tools": []}
+    
+    # Check for dependency files
+    dep_files = {
+        "requirements.txt": "Python",
+        "package.json": "JavaScript/Node.js",
+        "Gemfile": "Ruby",
+        "pom.xml": "Java/Maven",
+        "build.gradle": "Java/Gradle",
+        "go.mod": "Go",
+        "Cargo.toml": "Rust",
+        "composer.json": "PHP"
+    }
+    
+    for dep_file, lang in dep_files.items():
+        if any(dep_file in f for f in file_list):
+            deps["languages"].append(lang)
+            
+            # Try to read the file
+            matching_files = [f for f in file_list if dep_file in f]
+            if matching_files:
+                content = get_file_content(owner, repo, matching_files[0])
+                if content:
+                    # Extract framework names
+                    if "django" in content.lower():
+                        deps["frameworks"].append("Django")
+                    if "flask" in content.lower():
+                        deps["frameworks"].append("Flask")
+                    if "fastapi" in content.lower():
+                        deps["frameworks"].append("FastAPI")
+                    if "react" in content.lower():
+                        deps["frameworks"].append("React")
+                    if "vue" in content.lower():
+                        deps["frameworks"].append("Vue.js")
+                    if "angular" in content.lower():
+                        deps["frameworks"].append("Angular")
+                    if "express" in content.lower():
+                        deps["frameworks"].append("Express.js")
+                    if "spring" in content.lower():
+                        deps["frameworks"].append("Spring")
+    
+    return deps
+
 def get_key_files(file_list: list) -> list:
-    """Pick the most important files to analyze."""
-    priority = ["README", "main", "app", "index", "server", "config", "requirements", "package.json", "Dockerfile"]
-    key = []
-    for p in priority:
-        for f in file_list:
-            if p.lower() in f.lower() and f not in key:
-                key.append(f)
-    extras = [f for f in file_list if f not in key and f.endswith(".py")][:5]
-    return (key + extras)[:10]
+    """Intelligently pick the most important files to analyze."""
+    priority_patterns = [
+        (r"README\.(md|txt|rst)", 100),  # Documentation
+        (r"(main|app|index|server)\.(py|js|ts|go|java)", 90),  # Entry points
+        (r"(requirements|package|Gemfile|pom|build\.gradle|go\.mod|Cargo)\.(txt|json|lock|xml|toml)", 85),  # Dependencies
+        (r"(config|settings|\.env\.example)\.(py|js|json|yaml|yml|toml)", 80),  # Configuration
+        (r"Dockerfile", 75),  # Containerization
+        (r"(docker-compose|kubernetes|k8s)\.(yml|yaml)", 70),  # Orchestration
+        (r"\.github/workflows/.*\.yml", 65),  # CI/CD
+        (r"(models|schema|database)\.(py|js|ts|sql)", 60),  # Data models
+        (r"(routes|controllers|views|api)\.(py|js|ts)", 55),  # API/Routes
+        (r"(test_|_test\.|\.test\.|\.spec\.)", 50),  # Tests
+    ]
+    
+    scored_files = []
+    for file_path in file_list:
+        score = 0
+        for pattern, points in priority_patterns:
+            if re.search(pattern, file_path, re.IGNORECASE):
+                score += points
+        
+        # Bonus for files in root or important directories
+        if "/" not in file_path or file_path.count("/") == 1:
+            score += 20
+        
+        if score > 0:
+            scored_files.append((file_path, score))
+    
+    # Sort by score and take top files
+    scored_files.sort(key=lambda x: x[1], reverse=True)
+    key_files = [f[0] for f in scored_files[:15]]
+    
+    return key_files
 
 def build_context(owner: str, repo: str, file_list: list) -> str:
-    """Build a context string from key files for LLM analysis."""
+    """Build an intelligent context string with deep analysis."""
+    # Get repository metadata
+    metadata = get_repo_metadata(owner, repo)
+    
+    # Analyze structure
+    structure = analyze_file_structure(file_list)
+    
+    # Extract dependencies
+    dependencies = extract_dependencies(file_list, owner, repo)
+    
+    # Get key files
     key_files = get_key_files(file_list)
-    context = f"Repository: {owner}/{repo}\n\nFiles in repo:\n"
-    context += "\n".join(file_list[:50])
-    context += "\n\n--- KEY FILE CONTENTS ---\n"
-    for f in key_files:
-        content = get_file_content(owner, repo, f)
+    
+    # Build comprehensive context
+    context = f"""# Repository Analysis: {owner}/{repo}
+
+## Repository Metadata
+- Description: {metadata.get('description', 'N/A')}
+- Primary Language: {metadata.get('language', 'N/A')}
+- Stars: {metadata.get('stars', 0)} | Forks: {metadata.get('forks', 0)}
+- Topics: {', '.join(metadata.get('topics', [])) or 'None'}
+- Size: {metadata.get('size', 0)} KB
+- Open Issues: {metadata.get('open_issues', 0)}
+
+## Structure Analysis
+- Total Files: {len(file_list)}
+- Total Directories: {structure['total_directories']}
+- File Types: {', '.join([f"{ext} ({count})" for ext, count in list(structure['extensions'].items())[:5]])}
+
+## Project Characteristics
+- Has Tests: {'✓' if structure['has_tests'] else '✗'}
+- Has Documentation: {'✓' if structure['has_docs'] else '✗'}
+- Has CI/CD: {'✓' if structure['has_ci'] else '✗'}
+- Has Docker: {'✓' if structure['has_docker'] else '✗'}
+- Has API Layer: {'✓' if structure['has_api'] else '✗'}
+- Architecture: {'Full-stack' if structure['has_frontend'] and structure['has_backend'] else 'Frontend' if structure['has_frontend'] else 'Backend' if structure['has_backend'] else 'Unknown'}
+
+## Technology Stack
+- Languages: {', '.join(dependencies['languages']) or 'Detecting...'}
+- Frameworks: {', '.join(dependencies['frameworks']) or 'Analyzing...'}
+
+## Key Directories
+{chr(10).join(['- ' + d for d in structure['top_directories'][:10]])}
+
+## File Tree Sample (First 50 files)
+{chr(10).join(file_list[:50])}
+
+## Key File Contents Analysis
+"""
+    
+    # Add key file contents
+    for idx, file_path in enumerate(key_files, 1):
+        content = get_file_content(owner, repo, file_path)
         if content:
-            context += f"\n\n### {f}\n{content[:1500]}"
+            # Intelligently truncate based on file type
+            max_length = 2500 if any(x in file_path.lower() for x in ['readme', 'doc']) else 2000
+            truncated_content = content[:max_length]
+            if len(content) > max_length:
+                truncated_content += "\n... (truncated)"
+            
+            context += f"\n\n### File {idx}: {file_path}\n```\n{truncated_content}\n```"
+    
     return context
 
 def parse_github_url(url: str) -> tuple:

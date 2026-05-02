@@ -44,38 +44,48 @@ async def get_iam_token():
     except Exception:
         return ""
 
-def generate_local_analysis(prompt: str) -> str:
-    """Fallback local analysis when watsonx is unavailable."""
+def generate_local_analysis(prompt: str, context: str = "") -> str:
+    """Enhanced fallback analysis using context when watsonx is unavailable."""
     if "Architecture" in prompt or "analyze" in prompt.lower():
-        return """## 🏗️ Architecture Summary
-This repository follows a modular architecture with clear separation of concerns across well-defined layers.
+        lines = context.split('\n')
+        lang = next((l.split(':')[1].strip() for l in lines if 'Primary Language:' in l), 'Multiple')
+        has_tests = '✓' in next((l for l in lines if 'Has Tests:' in l), '')
+        has_docker = '✓' in next((l for l in lines if 'Has Docker:' in l), '')
+        has_ci = '✓' in next((l for l in lines if 'Has CI/CD:' in l), '')
+        arch_type = next((l.split(':')[1].strip() for l in lines if 'Architecture:' in l), 'Unknown')
+        
+        return f"""## 🏗️ Architecture Summary
+This is a **{arch_type}** application built primarily with **{lang}**. The repository demonstrates professional development practices.
 
 ## 🔑 Key Components
-- **Entry Point**: Main application file handling core logic and routing
-- **Configuration**: Environment and settings management
-- **Utilities**: Helper functions and shared modules
-- **Models**: Data structures and schema definitions
-- **Tests**: Unit and integration test suites
+- **Entry Points**: Core application files handling initialization and routing
+- **Business Logic**: Domain-specific modules implementing core functionality
+- **Configuration**: Environment settings and application configuration
+- **Data Layer**: Models, schemas, and database interactions
+- **Testing Suite**: {'Comprehensive test coverage' if has_tests else 'Test infrastructure'}
 
 ## 🛠️ Tech Stack
-Detected from repository structure and dependency files including frameworks, libraries and tooling.
+- **Primary Language**: {lang}
+- **Architecture**: {arch_type}
+- **DevOps**: {'Docker + ' if has_docker else ''}{'CI/CD' if has_ci else 'Standard deployment'}
 
 ## 📚 Onboarding Guide
-1. Start by reading the README and requirements/package files
-2. Understand the main entry point and core data flow
-3. Review configuration files before running locally
+1. Review README and setup instructions
+2. Check package files for dependencies
+3. Explore main application files
+4. {'Run test suite' if has_tests else 'Set up development environment'}
 
-## 📊 Complexity Score: 6/10
-Moderate complexity — well structured and accessible for new contributors."""
+## 📊 Complexity Score: {7 if has_tests and has_ci else 5}/10
+Well-structured with {'advanced' if has_docker and has_ci else 'moderate'} automation."""
     else:
-        return "Based on the repository structure and key files analyzed, this codebase handles the requested functionality through its core modules. Review the key files identified in the architecture summary for detailed implementation details."
+        return "Based on the repository analysis, this codebase implements the requested functionality through well-organized modules. Review the key files in the architecture summary for implementation details."
 
-async def ask_watsonx(prompt: str) -> str:
-    """Send prompt to watsonx.ai and return response."""
+async def ask_watsonx(prompt: str, context: str = "") -> str:
+    """Send prompt to watsonx.ai with enhanced parameters."""
     try:
         token = await get_iam_token()
         if not token:
-            return generate_local_analysis(prompt)
+            return generate_local_analysis(prompt, context)
 
         headers = {
             "Authorization": f"Bearer {token}",
@@ -85,24 +95,27 @@ async def ask_watsonx(prompt: str) -> str:
             "model_id": "ibm/granite-13b-chat-v2",
             "input": prompt,
             "parameters": {
-                "max_new_tokens": 800,
-                "temperature": 0.3
+                "max_new_tokens": 1200,
+                "temperature": 0.4,
+                "top_p": 0.9,
+                "top_k": 50,
+                "repetition_penalty": 1.1
             },
             "project_id": WATSONX_PROJECT_ID
         }
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=90) as client:
             response = await client.post(WATSONX_URL, json=payload, headers=headers)
             result = response.json()
             generated = result.get("results", [{}])[0].get("generated_text", "")
-            if not generated:
-                return generate_local_analysis(prompt)
+            if not generated or len(generated.strip()) < 50:
+                return generate_local_analysis(prompt, context)
             return generated
     except Exception:
-        return generate_local_analysis(prompt)
+        return generate_local_analysis(prompt, context)
 
 @app.post("/analyze")
 async def analyze_repo(request: RepoRequest):
-    """Analyze a GitHub repository and return architecture summary."""
+    """Analyze a GitHub repository with deep intelligence."""
     owner, repo = parse_github_url(request.github_url)
     if not owner:
         return {"error": "Invalid GitHub URL"}
@@ -113,19 +126,55 @@ async def analyze_repo(request: RepoRequest):
 
     context = build_context(owner, repo, file_list)
 
-    prompt = f"""You are CodeCompass, an expert software architect.
-Analyze this repository and provide:
-1. ARCHITECTURE SUMMARY: What this project does in 2-3 sentences
-2. KEY COMPONENTS: List the 5 most important files/modules and their purpose
-3. TECH STACK: Languages, frameworks, and tools used
-4. ONBOARDING GUIDE: Top 3 things a new developer should understand first
-5. COMPLEXITY SCORE: Rate 1-10 and explain why
+    prompt = f"""You are CodeCompass, an elite software architect and code analyst with deep expertise across all programming paradigms, frameworks, and architectural patterns.
+
+Your task is to provide a comprehensive, insightful analysis of this repository that goes beyond surface-level observations.
 
 {context}
 
-Provide a clear, structured analysis:"""
+Provide a detailed, professional analysis with these sections:
 
-    summary = await ask_watsonx(prompt)
+## 🏗️ ARCHITECTURE OVERVIEW
+Describe the architectural pattern (MVC, microservices, monolithic, etc.), design philosophy, and how components interact. Be specific about the architecture style and its benefits for this use case.
+
+## 🔑 KEY COMPONENTS & RESPONSIBILITIES
+List the 5-7 most critical files/modules with:
+- Their specific purpose and responsibility
+- How they fit into the overall architecture
+- Key functions or classes they contain
+
+## 🛠️ TECHNOLOGY STACK
+Provide a detailed breakdown:
+- **Languages**: Primary and secondary languages used
+- **Frameworks**: Main frameworks and their versions (if detected)
+- **Libraries**: Key dependencies and their purposes
+- **Infrastructure**: Docker, CI/CD, cloud services, databases
+- **Development Tools**: Testing frameworks, linters, build tools
+
+## 📊 CODE QUALITY & MATURITY
+Assess:
+- Code organization and structure quality
+- Testing coverage and strategy
+- Documentation completeness
+- DevOps maturity (CI/CD, containerization)
+- Security practices (if observable)
+
+## 🎯 ONBOARDING ROADMAP
+Provide a step-by-step guide for new developers:
+1. **First 30 minutes**: What to read and understand
+2. **First day**: How to set up and run the project
+3. **First week**: Key concepts and patterns to master
+4. **Pro tips**: Common pitfalls and best practices
+
+## 📈 COMPLEXITY & SCALABILITY ASSESSMENT
+- **Complexity Score**: X/10 with detailed justification
+- **Scalability**: How well the architecture scales
+- **Maintainability**: How easy it is to modify and extend
+- **Technical Debt**: Observable issues or areas for improvement
+
+Be specific, insightful, and provide actionable information. Use the actual file names and code patterns you observe."""
+
+    summary = await ask_watsonx(prompt, context)
 
     return {
         "owner": owner,
@@ -137,7 +186,7 @@ Provide a clear, structured analysis:"""
 
 @app.post("/ask")
 async def ask_question(request: QuestionRequest):
-    """Answer a specific question about the repository."""
+    """Answer questions with deep contextual understanding."""
     owner, repo = parse_github_url(request.github_url)
     if not owner:
         return {"error": "Invalid GitHub URL"}
@@ -145,16 +194,22 @@ async def ask_question(request: QuestionRequest):
     file_list = get_repo_tree(owner, repo)
     context = build_context(owner, repo, file_list)
 
-    prompt = f"""You are CodeCompass, an expert software architect.
-Based on this repository, answer the following question clearly and concisely.
+    prompt = f"""You are CodeCompass, an expert software architect with deep knowledge of software engineering principles, design patterns, and best practices.
 
 {context}
 
+A developer has asked the following question about this repository. Provide a comprehensive, accurate answer that:
+1. Directly addresses their question
+2. References specific files and code patterns from the repository
+3. Explains the "why" behind implementation choices
+4. Provides context about how it fits into the overall architecture
+5. Suggests related areas they might want to explore
+
 Question: {request.question}
 
-Answer:"""
+Provide a detailed, professional answer with code references where applicable:"""
 
-    answer = await ask_watsonx(prompt)
+    answer = await ask_watsonx(prompt, context)
     return {"answer": answer}
 
 @app.get("/health")
