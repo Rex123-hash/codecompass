@@ -452,12 +452,30 @@
     }
     .results-section.visible { display: block; }
 
-    .results-header { margin-bottom: 40px; }
-    .results-header h2 {
+    .results-header { margin-bottom: 40px; display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+    .results-header-left h2 {
       font-size: 28px; font-weight: 700; color: var(--slate-100);
       margin-bottom: 8px; letter-spacing: -.6px;
     }
-    .results-header p { font-size: 14px; color: var(--slate-500); }
+    .results-header-left p { font-size: 14px; color: var(--slate-500); }
+    .report-actions { display: flex; gap: 10px; flex-shrink: 0; }
+    .report-btn {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 9px 16px; border-radius: 8px; font-size: 13px; font-weight: 600;
+      cursor: pointer; border: none; transition: all .18s;
+    }
+    .report-btn-copy {
+      background: rgba(255,255,255,.06);
+      border: 1px solid rgba(255,255,255,.10);
+      color: var(--slate-300);
+    }
+    .report-btn-copy:hover { background: rgba(255,255,255,.10); color: #fff; }
+    .report-btn-download {
+      background: linear-gradient(135deg, #1d4ed8, #2563eb);
+      color: #fff;
+      box-shadow: 0 4px 14px rgba(37,99,235,.35);
+    }
+    .report-btn-download:hover { background: linear-gradient(135deg, #1e40af, #1d4ed8); }
 
     .metric-grid {
       display: grid;
@@ -1111,8 +1129,24 @@
 <!-- RESULTS SECTION -->
 <section class="results-section" id="results-section">
   <div class="results-header">
-    <h2>Analysis Results</h2>
-    <p id="results-repo-url">Repository insights and metrics</p>
+    <div class="results-header-left">
+      <h2>Analysis Results</h2>
+      <p id="results-repo-url">Repository insights and metrics</p>
+    </div>
+    <div class="report-actions">
+      <button class="report-btn report-btn-copy" onclick="copyReport()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+        </svg>
+        Copy Report
+      </button>
+      <button class="report-btn report-btn-download" onclick="downloadReport()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        Download Report
+      </button>
+    </div>
   </div>
 
   <div class="metric-grid">
@@ -1576,6 +1610,218 @@
   document.getElementById('file-modal').addEventListener('click', e => {
     if (e.target === document.getElementById('file-modal')) closeFileModal();
   });
-</script>
+
+  // ── Report generation ──────────────────────────────────────
+  function buildReportHTML() {
+    const repoUrl  = document.getElementById('results-repo-url').textContent;
+    const summary  = document.getElementById('summary-text').innerText;
+    const files    = window._repoOwner ? `${window._repoOwner}/${window._repoName}` : repoUrl;
+    const totalFiles = document.getElementById('metric-files').textContent;
+    const now      = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
+
+    const scores = {
+      overall:   document.getElementById('overall-score-num').textContent,
+      label:     document.getElementById('overall-label').textContent,
+      tests:     document.getElementById('score-test-value').textContent,
+      devops:    document.getElementById('score-devops-value').textContent,
+      docs:      document.getElementById('score-docs-value').textContent,
+      structure: document.getElementById('score-structure-value').textContent,
+      security:  document.getElementById('score-security-value').textContent,
+    };
+
+    const quickWinsEl = document.getElementById('quick-wins-list');
+    const qwItems = [...quickWinsEl.querySelectorAll('.quick-win-item')].map(el => {
+      const title = el.querySelector('.qw-title')?.textContent || '';
+      const desc  = el.querySelector('.qw-desc')?.textContent  || '';
+      const diff  = el.querySelector('.qw-diff')?.textContent  || '';
+      return `<tr><td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;font-weight:600;color:#1e293b">${title}</td><td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;color:#475569">${desc}</td><td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;text-align:center"><span style="background:#dbeafe;color:#1d4ed8;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600">${diff}</span></td></tr>`;
+    }).join('');
+
+    const scoreBar = (val) => {
+      const pct = Math.min(100, (parseFloat(val)/10)*100);
+      return `<div style="background:#e2e8f0;border-radius:4px;height:8px;width:100%"><div style="background:linear-gradient(90deg,#2563eb,#60a5fa);border-radius:4px;height:8px;width:${pct}%"></div></div>`;
+    };
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>CodeCompass Report — ${files}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',Arial,sans-serif;background:#f8fafc;color:#1e293b;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  @media print{body{background:#fff}.page-break{page-break-before:always}}
+</style>
+</head>
+<body>
+
+<!-- LETTERHEAD -->
+<div style="background:linear-gradient(135deg,#0c1a3a 0%,#1d4ed8 60%,#2563eb 100%);padding:40px 56px 32px;position:relative;overflow:hidden">
+  <div style="position:absolute;inset:0;background-image:radial-gradient(circle,rgba(255,255,255,.07) 1px,transparent 1px);background-size:24px 24px"></div>
+  <div style="position:relative;display:flex;align-items:center;justify-content:space-between">
+    <div>
+      <div style="display:flex;align-items:center;gap:16px;margin-bottom:12px">
+        <div style="width:52px;height:52px;background:rgba(255,255,255,.15);border-radius:14px;display:flex;align-items:center;justify-content:center;border:1px solid rgba(255,255,255,.2)">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="white" stroke-width="2"/><path d="M12 8v4l3 3" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+        </div>
+        <div>
+          <div style="font-size:26px;font-weight:800;color:#fff;letter-spacing:-0.8px">CodeCompass</div>
+          <div style="font-size:13px;color:rgba(255,255,255,.7);margin-top:2px">AI-Powered Repository Intelligence</div>
+        </div>
+      </div>
+      <div style="display:inline-flex;align-items:center;gap:8px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);border-radius:20px;padding:6px 14px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="white" stroke-width="2"/><path d="M9 9h6M9 12h6M9 15h4" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+        <span style="font-size:12px;color:rgba(255,255,255,.9);font-weight:500">Powered by IBM watsonx.ai · ibm/granite-3-8b-instruct</span>
+      </div>
+    </div>
+    <div style="text-align:right">
+      <div style="font-size:11px;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Generated</div>
+      <div style="font-size:14px;color:rgba(255,255,255,.9);font-weight:500">${now}</div>
+      <div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:8px">IBM Bob Dev Day Hackathon</div>
+    </div>
+  </div>
+</div>
+
+<!-- REPO INFO BAR -->
+<div style="background:#fff;border-bottom:1px solid #e2e8f0;padding:20px 56px;display:flex;align-items:center;justify-content:space-between">
+  <div>
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#94a3b8;margin-bottom:4px">Repository Analyzed</div>
+    <div style="font-size:18px;font-weight:700;color:#0f172a">${files}</div>
+  </div>
+  <div style="display:flex;gap:32px">
+    <div style="text-align:center">
+      <div style="font-size:24px;font-weight:800;color:#1d4ed8">${totalFiles}</div>
+      <div style="font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px">Total Files</div>
+    </div>
+    <div style="text-align:center">
+      <div style="font-size:24px;font-weight:800;color:#1d4ed8">${scores.overall}/10</div>
+      <div style="font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px">Overall Score</div>
+    </div>
+    <div style="text-align:center">
+      <div style="font-size:24px;font-weight:800;color:#1d4ed8">${scores.label}</div>
+      <div style="font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px">Rating</div>
+    </div>
+  </div>
+</div>
+
+<!-- BODY -->
+<div style="max-width:900px;margin:0 auto;padding:40px 56px">
+
+  <!-- SCORE CARDS -->
+  <div style="margin-bottom:40px">
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:#94a3b8;margin-bottom:16px;font-weight:600">Quality Scores</div>
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:14px">
+      ${[
+        ['Test Coverage', scores.tests],
+        ['DevOps',        scores.devops],
+        ['Documentation', scores.docs],
+        ['Structure',     scores.structure],
+        ['Security',      scores.security],
+      ].map(([label, val]) => `
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:18px 16px;text-align:center">
+        <div style="font-size:26px;font-weight:800;color:#1d4ed8;margin-bottom:6px">${val}</div>
+        <div style="font-size:11px;color:#64748b;margin-bottom:10px">${label}</div>
+        ${scoreBar(val)}
+      </div>`).join('')}
+    </div>
+    <div style="margin-top:10px;font-size:12px;color:#94a3b8;text-align:right">
+      Overall = structure×0.30 + tests×0.25 + docs×0.20 + devops×0.15 + security×0.10
+    </div>
+  </div>
+
+  <!-- AI SUMMARY -->
+  <div style="margin-bottom:40px">
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:#94a3b8;margin-bottom:16px;font-weight:600">AI Analysis — IBM Granite</div>
+    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:28px 32px;line-height:1.75;font-size:14px;color:#334155;white-space:pre-wrap">${summary}</div>
+  </div>
+
+  <!-- QUICK WINS -->
+  ${qwItems ? `
+  <div style="margin-bottom:40px">
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:#94a3b8;margin-bottom:16px;font-weight:600">Recommended Quick Wins</div>
+    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="background:#f8fafc">
+          <th style="padding:12px 14px;text-align:left;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#94a3b8;font-weight:600">Issue</th>
+          <th style="padding:12px 14px;text-align:left;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#94a3b8;font-weight:600">Description</th>
+          <th style="padding:12px 14px;text-align:center;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#94a3b8;font-weight:600">Difficulty</th>
+        </tr></thead>
+        <tbody>${qwItems}</tbody>
+      </table>
+    </div>
+  </div>` : ''}
+
+</div>
+
+<!-- FOOTER -->
+<div style="background:#0f172a;padding:24px 56px;display:flex;align-items:center;justify-content:space-between;margin-top:20px">
+  <div style="display:flex;align-items:center;gap:12px">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" fill="rgba(59,130,246,.2)" stroke="#3b82f6" stroke-width="2"/><polyline points="9 12 11 14 15 10" stroke="#3b82f6" stroke-width="2" stroke-linecap="round"/></svg>
+    <span style="font-size:12px;color:#475569">Generated by CodeCompass · Powered by IBM watsonx.ai (Bob)</span>
+  </div>
+  <span style="font-size:12px;color:#334155;font-weight:500">ibm/granite-3-8b-instruct · IBM Bob Dev Day Hackathon · ${now}</span>
+</div>
+
+</body></html>`;
+  }
+
+  function downloadReport() {
+    if (!window._repoOwner) { openModal('No Report', 'Please analyze a repository first.'); return; }
+    const html = buildReportHTML();
+    const blob = new Blob([html], { type: 'text/html' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `codecompass-report-${window._repoName || 'repo'}-${new Date().toISOString().slice(0,10)}.html`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function copyReport() {
+    if (!window._repoOwner) { openModal('No Report', 'Please analyze a repository first.'); return; }
+    const scores = {
+      overall:   document.getElementById('overall-score-num').textContent,
+      label:     document.getElementById('overall-label').textContent,
+      tests:     document.getElementById('score-test-value').textContent,
+      devops:    document.getElementById('score-devops-value').textContent,
+      docs:      document.getElementById('score-docs-value').textContent,
+      structure: document.getElementById('score-structure-value').textContent,
+      security:  document.getElementById('score-security-value').textContent,
+    };
+    const summary = document.getElementById('summary-text').innerText;
+    const repo = `${window._repoOwner}/${window._repoName}`;
+    const now  = new Date().toLocaleDateString();
+    const text = `CODECOMPASS ANALYSIS REPORT
+Powered by IBM watsonx.ai (ibm/granite-3-8b-instruct)
+IBM Bob Dev Day Hackathon · ${now}
+${'─'.repeat(60)}
+
+Repository: ${repo}
+
+QUALITY SCORES
+  Overall Rating : ${scores.overall}/10 (${scores.label})
+  Test Coverage  : ${scores.tests}/10
+  DevOps         : ${scores.devops}/10
+  Documentation  : ${scores.docs}/10
+  Structure      : ${scores.structure}/10
+  Security       : ${scores.security}/10
+
+Formula: structure×0.30 + tests×0.25 + docs×0.20 + devops×0.15 + security×0.10
+
+${'─'.repeat(60)}
+AI ANALYSIS (IBM Granite)
+
+${summary}
+
+${'─'.repeat(60)}
+Generated by CodeCompass · github.com/Rex123-hash/codecompass`;
+
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = document.querySelector('.report-btn-copy');
+      const orig = btn.innerHTML;
+      btn.innerHTML = '✓ Copied!';
+      btn.style.color = '#34d399';
+      setTimeout(() => { btn.innerHTML = orig; btn.style.color = ''; }, 2000);
+    });
+  }
 </body>
 </html>
