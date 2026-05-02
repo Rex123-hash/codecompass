@@ -3,6 +3,12 @@ __pycache__/
 *.pyc
 *.log
 .cache/
+.pytest_cache/
+pytest-cache-files-*/
+.coverage
+htmlcov/
+tmp_pycache/
+tmp_coverage/
 .*
 !.env.example
 !.github

@@ -14,12 +14,18 @@ load_dotenv()
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 
+def github_get(url: str, headers: dict = None, timeout: int = 15):
+    """Call GitHub directly, bypassing broken local proxy environment vars."""
+    session = requests.Session()
+    session.trust_env = False
+    return session.get(url, headers=headers or {}, timeout=timeout)
+
 def get_repo_tree(owner: str, repo: str) -> list:
     """Fetch the full file tree of a GitHub repository."""
     headers = {"Authorization": f"token {GITHUB_TOKEN}"} if GITHUB_TOKEN else {}
     url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/HEAD?recursive=1"
     try:
-        response = requests.get(url, headers=headers, timeout=15)
+        response = github_get(url, headers=headers, timeout=15)
         if response.status_code == 403:
             remaining = response.headers.get("X-RateLimit-Remaining", "0")
             if remaining == "0":
@@ -43,7 +49,7 @@ def get_repo_metadata(owner: str, repo: str) -> dict:
     headers = {"Authorization": f"token {GITHUB_TOKEN}"} if GITHUB_TOKEN else {}
     url = f"https://api.github.com/repos/{owner}/{repo}"
     try:
-        response = requests.get(url, headers=headers)
+        response = github_get(url, headers=headers)
         if response.status_code == 200:
             data = response.json()
             return {
@@ -65,7 +71,7 @@ def get_file_content(owner: str, repo: str, path: str) -> str:
     """Fetch content of a specific file from GitHub."""
     headers = {"Authorization": f"token {GITHUB_TOKEN}"} if GITHUB_TOKEN else {}
     url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
-    response = requests.get(url, headers=headers)
+    response = github_get(url, headers=headers)
     if response.status_code != 200:
         return ""
     import base64
@@ -225,11 +231,11 @@ def build_context(owner: str, repo: str, file_list: list) -> str:
 - File Types: {', '.join([f"{ext} ({count})" for ext, count in list(structure['extensions'].items())[:5]])}
 
 ## Project Characteristics
-- Has Tests: {'✓' if structure['has_tests'] else '✗'}
-- Has Documentation: {'✓' if structure['has_docs'] else '✗'}
-- Has CI/CD: {'✓' if structure['has_ci'] else '✗'}
-- Has Docker: {'✓' if structure['has_docker'] else '✗'}
-- Has API Layer: {'✓' if structure['has_api'] else '✗'}
+- Has Tests: {'Yes' if structure['has_tests'] else 'No'}
+- Has Documentation: {'Yes' if structure['has_docs'] else 'No'}
+- Has CI/CD: {'Yes' if structure['has_ci'] else 'No'}
+- Has Docker: {'Yes' if structure['has_docker'] else 'No'}
+- Has API Layer: {'Yes' if structure['has_api'] else 'No'}
 - Architecture: {'Full-stack' if structure['has_frontend'] and structure['has_backend'] else 'Frontend' if structure['has_frontend'] else 'Backend' if structure['has_backend'] else 'Unknown'}
 
 ## Technology Stack
@@ -420,9 +426,69 @@ def smart_audit(owner: str, repo: str, file_list: list) -> dict:
     # Calculate scores
     total_files = len(file_list) if file_list else 1
     
-    # Test score: (number of test files / total files) * 10, capped at 10
-    test_files = [f for f in file_list if any(p in f.lower() for p in test_patterns)]
-    test_score = min(10.0, round((len(test_files) / total_files) * 10, 1))
+    # Test score: static test-health proxy.
+    # We cannot run coverage for an arbitrary GitHub repo here, so score the
+    # observable signals that most closely map to meaningful test coverage:
+    # tests exist, tests are proportional to source files, test config exists,
+    # and CI is present to run them.
+    source_extensions = {
+        '.py', '.js', '.jsx', '.ts', '.tsx', '.go', '.rs', '.java',
+        '.kt', '.cs', '.rb', '.php', '.swift', '.c', '.cc', '.cpp',
+        '.h', '.hpp'
+    }
+    ignored_source_dirs = (
+        'test/', 'tests/', '__tests__/', 'spec/', 'docs/', 'doc/',
+        'examples/', 'example/', 'samples/', 'sample/', 'migrations/',
+        'build/', 'dist/', 'vendor/', 'node_modules/', '__pycache__/'
+    )
+    test_config_files = {
+        'pytest.ini', 'tox.ini', 'noxfile.py', 'conftest.py',
+        'jest.config.js', 'jest.config.ts', 'vitest.config.js',
+        'vitest.config.ts', 'playwright.config.js', 'playwright.config.ts',
+        'cypress.config.js', 'cypress.config.ts', 'karma.conf.js',
+        'phpunit.xml', 'go.mod', 'cargo.toml'
+    }
+
+    def file_ext(path: str) -> str:
+        return os.path.splitext(path.lower())[1]
+
+    def is_test_file(path: str) -> bool:
+        lower = path.lower()
+        return (
+            any(p in lower for p in test_patterns)
+            or lower.startswith(('test/', 'tests/', '__tests__/', 'spec/'))
+            or '/test/' in lower
+            or '/tests/' in lower
+            or '/__tests__/' in lower
+            or '/spec/' in lower
+        )
+
+    def is_source_file(path: str) -> bool:
+        lower = path.lower()
+        if file_ext(lower) not in source_extensions:
+            return False
+        if is_test_file(lower):
+            return False
+        return not any(part in lower for part in ignored_source_dirs)
+
+    test_files = [f for f in file_list if is_test_file(f)]
+    source_files = [f for f in file_list if is_source_file(f)]
+    test_config_present = any(f.lower() in test_config_files for f in file_list)
+
+    if not test_files:
+        test_score = 0.0
+    else:
+        test_score = 4.0
+        if source_files:
+            test_to_source_ratio = len(test_files) / len(source_files)
+            test_score += min(4.0, (test_to_source_ratio / 0.5) * 4.0)
+        else:
+            test_score += 2.0
+        if test_config_present:
+            test_score += 1.2
+        if has_file(ci_patterns):
+            test_score += 0.8
+        test_score = round(min(10.0, test_score), 1)
     
     # DevOps score: +2.5 for each (Dockerfile, CI/CD, .env.example, Makefile)
     devops_score = 0.0

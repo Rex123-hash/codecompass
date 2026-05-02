@@ -163,7 +163,7 @@ def test_get_repo_tree_rate_limit():
     mock_response = MagicMock()
     mock_response.status_code = 403
     mock_response.headers = {"X-RateLimit-Remaining": "0"}
-    with patch("analyzer.requests.get", return_value=mock_response):
+    with patch("analyzer.github_get", return_value=mock_response):
         with pytest.raises(ValueError, match="RATE_LIMIT"):
             get_repo_tree("owner", "repo")
 
@@ -171,6 +171,6 @@ def test_get_repo_tree_not_found():
     from analyzer import get_repo_tree
     mock_response = MagicMock()
     mock_response.status_code = 404
-    with patch("analyzer.requests.get", return_value=mock_response):
+    with patch("analyzer.github_get", return_value=mock_response):
         with pytest.raises(ValueError, match="NOT_FOUND"):
             get_repo_tree("owner", "repo")

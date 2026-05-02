@@ -6,6 +6,7 @@
 # =============================================================
 
 from fastapi import FastAPI
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -58,9 +59,9 @@ def generate_local_analysis(prompt: str, context: str = "", scores: dict = None)
     if "Architecture" in prompt or "analyze" in prompt.lower():
         lines = context.split('\n')
         lang = next((l.split(':')[1].strip() for l in lines if 'Primary Language:' in l), 'Multiple')
-        has_tests = '✓' in next((l for l in lines if 'Has Tests:' in l), '')
-        has_docker = '✓' in next((l for l in lines if 'Has Docker:' in l), '')
-        has_ci = '✓' in next((l for l in lines if 'Has CI/CD:' in l), '')
+        has_tests = 'Yes' in next((l for l in lines if 'Has Tests:' in l), '')
+        has_docker = 'Yes' in next((l for l in lines if 'Has Docker:' in l), '')
+        has_ci = 'Yes' in next((l for l in lines if 'Has CI/CD:' in l), '')
         arch_type = next((l.split(':')[1].strip() for l in lines if 'Architecture:' in l), 'Unknown')
 
         s = scores or {}
@@ -80,7 +81,7 @@ This is a **{arch_type}** application built primarily with **{lang}**.
 - **Business Logic**: Domain-specific modules implementing core functionality
 - **Configuration**: Environment settings and application configuration
 - **Data Layer**: Models, schemas, and database interactions
-- **Testing Suite**: {'Comprehensive test coverage' if has_tests else 'Tests not detected — consider adding them'}
+- **Testing Suite**: {'Comprehensive test coverage' if has_tests else 'Tests not detected - consider adding them'}
 
 ## Tech Stack
 - **Primary Language**: {lang}
@@ -96,7 +97,7 @@ This is a **{arch_type}** application built primarily with **{lang}**.
 ## Complexity Assessment
 - **Overall Score**: {avg}/10 (computed from test coverage, DevOps, docs, structure, security)
 - **Maintainability**: {'Good' if avg >= 6 else 'Needs improvement'}
-- **Recommendation**: {'Well-structured project — focus on CI/CD and containerization.' if has_tests else 'Add tests and a CI/CD pipeline to improve reliability.'}"""
+- **Recommendation**: {'Well-structured project - focus on CI/CD and containerization.' if has_tests else 'Add tests and a CI/CD pipeline to improve reliability.'}"""
     else:
         return "Based on the repository analysis, this codebase implements the requested functionality through well-organized modules. Review the key files in the architecture summary for implementation details."
 
@@ -155,7 +156,7 @@ async def analyze_repo(request: RepoRequest):
         return {"error": "Invalid GitHub URL"}
 
     try:
-        file_list = get_repo_tree(owner, repo)
+        file_list = await run_in_threadpool(get_repo_tree, owner, repo)
     except ValueError as e:
         msg = str(e)
         if "RATE_LIMIT" in msg:
@@ -168,7 +169,7 @@ async def analyze_repo(request: RepoRequest):
     if not file_list:
         return {"error": "Repository appears to be empty or has no accessible files."}
 
-    context = build_context(owner, repo, file_list)
+    context = await run_in_threadpool(build_context, owner, repo, file_list)
 
     prompt = f"""You are CodeCompass, an elite software architect and code analyst with deep expertise across all programming paradigms, frameworks, and architectural patterns.
 
@@ -218,7 +219,7 @@ Provide a step-by-step guide for new developers:
 
 Be specific, insightful, and provide actionable information. Use the actual file names and code patterns you observe."""
 
-    audit_data = smart_audit(owner, repo, file_list)
+    audit_data = await run_in_threadpool(smart_audit, owner, repo, file_list)
     summary = await ask_watsonx(prompt, context, audit_data["scores"])
 
     return {
@@ -238,8 +239,19 @@ async def ask_question(request: QuestionRequest):
     if not owner:
         return {"error": "Invalid GitHub URL"}
 
-    file_list = get_repo_tree(owner, repo)
-    context = build_context(owner, repo, file_list)
+    try:
+        file_list = await run_in_threadpool(get_repo_tree, owner, repo)
+    except ValueError as e:
+        msg = str(e)
+        if "RATE_LIMIT" in msg:
+            return {"error": "GitHub API rate limit exceeded. Add a GITHUB_TOKEN environment variable to increase the limit from 60 to 5,000 requests/hour."}
+        if "NOT_FOUND" in msg:
+            return {"error": "Repository not found. Please check the URL and make sure the repository is public."}
+        if "FORBIDDEN" in msg:
+            return {"error": "Access denied. The repository may be private."}
+        return {"error": f"Could not fetch repository: {msg}"}
+
+    context = await run_in_threadpool(build_context, owner, repo, file_list)
 
     prompt = f"""You are CodeCompass, an expert software architect with deep knowledge of software engineering principles, design patterns, and best practices.
 
@@ -262,11 +274,11 @@ Provide a detailed, professional answer with code references where applicable:""
 @app.get("/file")
 async def get_file(owner: str, repo: str, path: str):
     """Get content of a specific file from the repository."""
-    content = get_file_content(owner, repo, path)
+    content = await run_in_threadpool(get_file_content, owner, repo, path)
     if not content:
         return {"error": "Could not fetch file content"}
     return {"content": content, "path": path}
 
 @app.get("/health")
 def health():
-    return {"status": "CodeCompass is running 🧭"}
+    return {"status": "CodeCompass is running"}
