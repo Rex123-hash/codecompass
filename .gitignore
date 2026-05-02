@@ -5,6 +5,8 @@ __pycache__/
 .cache/
 .*
 !.env.example
+!.github
+!.github/**
 index_backup.html
 generate_html.py
 update_html.py
