@@ -7,6 +7,7 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import httpx
 import os
@@ -142,6 +143,10 @@ async def ask_watsonx(prompt: str, context: str = "", scores: dict = None) -> st
             return strip_emojis(generated)
     except Exception:
         return generate_local_analysis(prompt, context, scores)
+
+@app.get("/")
+def index():
+    return FileResponse("index.html")
 
 @app.post("/analyze")
 async def analyze_repo(request: RepoRequest):
