@@ -108,11 +108,12 @@ def test_strip_emojis_empty_string():
 # --- generate_local_analysis ---------------------------------
 
 def test_generate_local_analysis_architecture():
-    context = "Primary Language: Python\nHas Tests: checkmark\nHas Docker: checkmark\nHas CI/CD: x\nArchitecture: Full-stack"
+    context = "Primary Language: Python\nHas Tests: Yes\nHas Docker: Yes\nHas CI/CD: No\nArchitecture: Full-stack"
     scores = {"structure_score": 8, "test_score": 7, "docs_score": 6, "devops_score": 5, "security_score": 9}
     result = generate_local_analysis("analyze the Architecture", context, scores)
     assert "Architecture" in result
     assert "Python" in result
+    assert "Comprehensive test coverage" in result
 
 def test_generate_local_analysis_fallback():
     result = generate_local_analysis("random question", "", {})

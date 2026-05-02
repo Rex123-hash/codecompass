@@ -1340,7 +1340,7 @@
     <div class="file-modal-header">
       <span class="file-modal-title" id="file-modal-title"></span>
       <div class="file-modal-actions">
-        <button class="file-modal-btn" onclick="copyFileContent()">
+        <button class="file-modal-btn" onclick="copyFileContent(event)">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="currentColor" stroke-width="2"/></svg>
           Copy
         </button>
@@ -1371,6 +1371,12 @@
 
 <script>
   let currentRepoUrl = '';
+
+  function escapeHtml(str) {
+    const d = document.createElement('div');
+    d.appendChild(document.createTextNode(str));
+    return d.innerHTML;
+  }
 
   function openModal(title, body) {
     document.getElementById('modal-title').textContent = title;
@@ -1419,9 +1425,6 @@
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       currentRepoUrl = url;
-      // Auto-populate ask URL field
-      const askUrl = document.getElementById('ask-url');
-      if (askUrl) askUrl.value = url;
       displayResults(data);
       document.getElementById('results-section').scrollIntoView({ behavior: 'smooth' });
     } catch (e) {
@@ -1524,9 +1527,9 @@
         </div>`;
     }
     quickWins.forEach(win => {
-      const title = win.title || win;
-      const desc  = win.description || '';
-      const diff  = win.difficulty || '';
+      const title = escapeHtml(win.title || win);
+      const desc  = escapeHtml(win.description || '');
+      const diff  = escapeHtml(win.difficulty || '');
       const item  = document.createElement('div');
       item.className = 'quick-win-item';
       item.innerHTML = `
@@ -1534,9 +1537,9 @@
           <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
         <span class="quick-win-text">
-          <strong style="color:#f1f5f9">${title}</strong>
-          ${desc ? `<span style="color:#64748b;margin-left:6px">${desc}</span>` : ''}
-          ${diff ? `<span style="margin-left:8px;padding:2px 8px;border-radius:10px;font-size:11px;background:rgba(59,130,246,.1);color:#60a5fa">${diff}</span>` : ''}
+          <strong class="qw-title" style="color:#f1f5f9">${title}</strong>
+          ${desc ? `<span class="qw-desc" style="color:#64748b;margin-left:6px">${desc}</span>` : ''}
+          ${diff ? `<span class="qw-diff" style="margin-left:8px;padding:2px 8px;border-radius:10px;font-size:11px;background:rgba(59,130,246,.1);color:#60a5fa">${diff}</span>` : ''}
         </span>`;
       qList.appendChild(item);
     });
@@ -1568,6 +1571,7 @@
     const list = document.getElementById('file-tree-list');
     list.innerHTML = '';
     files.forEach(file => {
+      const safe = escapeHtml(file);
       const item = document.createElement('div');
       item.className = 'file-tree-item';
       item.innerHTML = `
@@ -1575,11 +1579,11 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;color:#3b82f6">
             <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
-          ${file}
+          ${safe}
         </div>
         <div class="file-actions">
-          <button class="file-btn" onclick="viewFile('${file.replace(/'/g,"\\'")}')">View</button>
-          <button class="file-btn" onclick="downloadFile('${file.replace(/'/g,"\\'")}')">Download</button>
+          <button class="file-btn" data-path="${safe}" onclick="viewFile(this.dataset.path)">View</button>
+          <button class="file-btn" data-path="${safe}" onclick="downloadFile(this.dataset.path)">Download</button>
         </div>`;
       list.appendChild(item);
     });
@@ -1607,9 +1611,9 @@
 
   function closeFileModal() { document.getElementById('file-modal').classList.remove('open'); }
 
-  function copyFileContent() {
+  function copyFileContent(e) {
     navigator.clipboard.writeText(window._currentFileContent || '').then(() => {
-      const btn = event.target.closest('button');
+      const btn = (e || window.event).target.closest('button');
       const orig = btn.innerHTML;
       btn.textContent = 'Copied!';
       btn.style.color = '#34d399';
@@ -1667,7 +1671,7 @@
     }).join('');
 
     const scoreBar = (val) => {
-      const pct = Math.min(100, (parseFloat(val)/10)*100);
+      const pct = Math.min(100, (parseFloat(String(val).split('/')[0])/10)*100);
       return `<div style="background:#e2e8f0;border-radius:4px;height:8px;width:100%"><div style="background:linear-gradient(90deg,#2563eb,#60a5fa);border-radius:4px;height:8px;width:${pct}%"></div></div>`;
     };
 

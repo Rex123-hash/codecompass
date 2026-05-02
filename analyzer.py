@@ -7,6 +7,7 @@
 import requests
 import os
 import re
+import base64
 from collections import Counter
 from dotenv import load_dotenv
 
@@ -14,11 +15,13 @@ load_dotenv()
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 
+# Shared session — reuses TCP connections and bypasses local proxy env vars
+_github_session = requests.Session()
+_github_session.trust_env = False
+
 def github_get(url: str, headers: dict = None, timeout: int = 15):
     """Call GitHub directly, bypassing broken local proxy environment vars."""
-    session = requests.Session()
-    session.trust_env = False
-    return session.get(url, headers=headers or {}, timeout=timeout)
+    return _github_session.get(url, headers=headers or {}, timeout=timeout)
 
 def get_repo_tree(owner: str, repo: str) -> list:
     """Fetch the full file tree of a GitHub repository."""
@@ -63,7 +66,7 @@ def get_repo_metadata(owner: str, repo: str) -> dict:
                 "size": data.get("size", 0),
                 "open_issues": data.get("open_issues_count", 0)
             }
-    except:
+    except Exception:
         pass
     return {}
 
@@ -71,14 +74,13 @@ def get_file_content(owner: str, repo: str, path: str) -> str:
     """Fetch content of a specific file from GitHub."""
     headers = {"Authorization": f"token {GITHUB_TOKEN}"} if GITHUB_TOKEN else {}
     url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
-    response = github_get(url, headers=headers)
-    if response.status_code != 200:
-        return ""
-    import base64
-    content = response.json().get("content", "")
     try:
+        response = github_get(url, headers=headers)
+        if response.status_code != 200:
+            return ""
+        content = response.json().get("content", "")
         return base64.b64decode(content).decode("utf-8", errors="ignore")
-    except:
+    except Exception:
         return ""
 
 def analyze_file_structure(file_list: list) -> dict:
@@ -280,11 +282,14 @@ def smart_audit(owner: str, repo: str, file_list: list) -> dict:
     quick_wins = []
     
     # Helper to check if any file matches patterns
+    file_list_lower = {f.lower() for f in file_list}
+    file_list_set = set(file_list)
+
     def has_file(patterns):
         return any(any(p in f.lower() for p in patterns) for f in file_list)
-    
+
     def has_exact_file(names):
-        return any(f in file_list or f.lower() in [x.lower() for x in file_list] for f in names)
+        return any(f in file_list_set or f.lower() in file_list_lower for f in names)
     
     # Check for README
     if not has_exact_file(['README.md', 'README.rst', 'README.txt', 'README']):
@@ -543,8 +548,8 @@ def smart_audit(owner: str, repo: str, file_list: list) -> dict:
         security_issues.append("Missing .gitignore")
     
     # High: Secret/credential files in root or anywhere
-    secret_patterns = ['secret', 'credential', 'password', 'private', 'key', 'token', 'api_key', 'apikey']
-    secret_files = [f for f in file_list if any(pattern in f.lower() for pattern in secret_patterns)
+    security_secret_patterns = ['secret', 'credential', 'password', 'private', 'key', 'token', 'api_key', 'apikey']
+    secret_files = [f for f in file_list if any(pattern in f.lower() for pattern in security_secret_patterns)
                     and not any(safe in f.lower() for safe in ['.example', '.sample', '.template', 'test', 'mock', 'dummy'])]
     if secret_files:
         security_score -= 2.0

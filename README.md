@@ -49,9 +49,9 @@ graph TB
     end
 
     subgraph GitHub["🐙 GitHub REST API"]
-        Trees[/repos/:owner/:repo/git/trees]
-        Contents[/repos/:owner/:repo/contents]
-        RepoMeta[/repos/:owner/:repo]
+        Trees["GET /repos/:owner/:repo/git/trees"]
+        Contents["GET /repos/:owner/:repo/contents"]
+        RepoMeta["GET /repos/:owner/:repo"]
     end
 
     UI -->|GitHub URL| API_Analyze

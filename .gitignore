@@ -17,3 +17,11 @@ index_backup.html
 generate_html.py
 update_html.py
 update_index.py
+server.log
+DEPLOYMENT_REVIEW.md
+DEPLOY_WITH_DOCKER.md
+GRANITE_INTEGRATION.md
+IBM_CODE_ENGINE_DEPLOYMENT.md
+REGION_SELECTION_GUIDE.md
+TESTING.md
+code-engine.yaml
