@@ -103,11 +103,10 @@ This is a **{arch_type}** application built primarily with **{lang}**.
 def strip_emojis(text: str) -> str:
     import re
     return re.sub(
-        r'[\U00010000-\U0010ffff'
-        r'\U0001F300-\U0001F9FF'
+        r'[\U0001F300-\U0001F9FF'
         r'\U00002702-\U000027B0'
         r'\U0000FE00-\U0000FE0F'
-        r'☀-⛿✀-➿]+',
+        r'\U00010000-\U0010FFFF]+',
         '', text
     ).strip()
 
@@ -155,9 +154,19 @@ async def analyze_repo(request: RepoRequest):
     if not owner:
         return {"error": "Invalid GitHub URL"}
 
-    file_list = get_repo_tree(owner, repo)
+    try:
+        file_list = get_repo_tree(owner, repo)
+    except ValueError as e:
+        msg = str(e)
+        if "RATE_LIMIT" in msg:
+            return {"error": "GitHub API rate limit exceeded. Add a GITHUB_TOKEN environment variable to increase the limit from 60 to 5,000 requests/hour."}
+        if "NOT_FOUND" in msg:
+            return {"error": "Repository not found. Please check the URL and make sure the repository is public."}
+        if "FORBIDDEN" in msg:
+            return {"error": "Access denied. The repository may be private."}
+        return {"error": f"Could not fetch repository: {msg}"}
     if not file_list:
-        return {"error": "Could not fetch repository. Check URL or token."}
+        return {"error": "Repository appears to be empty or has no accessible files."}
 
     context = build_context(owner, repo, file_list)
 

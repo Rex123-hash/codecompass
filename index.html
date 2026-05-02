@@ -1318,6 +1318,19 @@
     document.getElementById('modal').classList.remove('open');
   }
 
+  function setProgressStep(step) {
+    const steps = [
+      'Fetching repository tree…',
+      'Reading key files…',
+      'Building context…',
+      'Calling IBM Granite…',
+      'Scoring codebase…'
+    ];
+    const btn = document.getElementById('analyze-btn');
+    const label = steps[step] || 'Analyzing…';
+    btn.innerHTML = `<span class="spinner"></span> ${label}`;
+  }
+
   async function handleAnalyze() {
     const url = document.getElementById('repo-url').value.trim();
     if (!url) { openModal('Missing URL', 'Please enter a GitHub repository URL.'); return; }
@@ -1325,7 +1338,14 @@
     const btn = document.getElementById('analyze-btn');
     const orig = btn.innerHTML;
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span> Analyzing…';
+    setProgressStep(0);
+
+    // Cycle through progress steps while waiting
+    let step = 0;
+    const progressInterval = setInterval(() => {
+      step = Math.min(step + 1, 4);
+      setProgressStep(step);
+    }, 4000);
 
     try {
       const res = await fetch('/analyze', {
@@ -1336,11 +1356,15 @@
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       currentRepoUrl = url;
+      // Auto-populate ask URL field
+      const askUrl = document.getElementById('ask-url');
+      if (askUrl) askUrl.value = url;
       displayResults(data);
       document.getElementById('results-section').scrollIntoView({ behavior: 'smooth' });
     } catch (e) {
       openModal('Analysis Error', e.message || 'Failed to analyze. Check the URL and try again.');
     } finally {
+      clearInterval(progressInterval);
       btn.disabled = false;
       btn.innerHTML = orig;
     }

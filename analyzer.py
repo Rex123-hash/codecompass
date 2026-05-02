@@ -18,11 +18,25 @@ def get_repo_tree(owner: str, repo: str) -> list:
     """Fetch the full file tree of a GitHub repository."""
     headers = {"Authorization": f"token {GITHUB_TOKEN}"} if GITHUB_TOKEN else {}
     url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/HEAD?recursive=1"
-    response = requests.get(url, headers=headers)
-    if response.status_code != 200:
-        return []
-    tree = response.json().get("tree", [])
-    return [item["path"] for item in tree if item["type"] == "blob"]
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        if response.status_code == 403:
+            remaining = response.headers.get("X-RateLimit-Remaining", "0")
+            if remaining == "0":
+                raise ValueError("RATE_LIMIT: GitHub API rate limit exceeded. Add a GITHUB_TOKEN to increase limit from 60 to 5000 requests/hour.")
+            raise ValueError("FORBIDDEN: Repository may be private or access denied.")
+        if response.status_code == 404:
+            raise ValueError("NOT_FOUND: Repository not found. Check the URL and ensure it is public.")
+        if response.status_code == 429:
+            raise ValueError("RATE_LIMIT: Too many requests. Please wait a moment and try again.")
+        if response.status_code != 200:
+            raise ValueError(f"GITHUB_ERROR: Unexpected response ({response.status_code}).")
+        tree = response.json().get("tree", [])
+        return [item["path"] for item in tree if item["type"] == "blob"]
+    except ValueError:
+        raise
+    except Exception as e:
+        raise ValueError(f"NETWORK_ERROR: Could not reach GitHub API. {str(e)}")
 
 def get_repo_metadata(owner: str, repo: str) -> dict:
     """Fetch repository metadata from GitHub API."""
@@ -331,11 +345,54 @@ def smart_audit(owner: str, repo: str, file_list: list) -> dict:
     # Check for committed .env file
     if has_exact_file(['.env']):
         quick_wins.append({
-            "title": "Possible .env committed",
-            "description": "Never commit .env files with real secrets.",
+            "title": "⚠️ CRITICAL: .env file committed",
+            "description": "Remove .env from repository immediately and rotate any exposed secrets. Add to .gitignore.",
             "difficulty": "Easy",
             "time": "5 min",
             "file": ".env"
+        })
+    
+    # Check for .env.example template
+    if not has_exact_file(['.env.example', '.env.sample', '.env.template']) and has_exact_file(['.env']):
+        quick_wins.append({
+            "title": "Add .env.example template",
+            "description": "Create .env.example with dummy values to guide setup without exposing secrets.",
+            "difficulty": "Easy",
+            "time": "5 min",
+            "file": ".env.example"
+        })
+    
+    # Check for SECURITY.md
+    if not has_exact_file(['SECURITY.md', '.github/SECURITY.md']):
+        quick_wins.append({
+            "title": "Add security policy (SECURITY.md)",
+            "description": "Document how to report security vulnerabilities responsibly.",
+            "difficulty": "Easy",
+            "time": "10 min",
+            "file": "SECURITY.md"
+        })
+    
+    # Check for dependency lock files
+    if has_exact_file(['package.json']) and not has_exact_file(['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml']):
+        quick_wins.append({
+            "title": "Add package lock file",
+            "description": "Lock dependency versions to prevent supply chain attacks.",
+            "difficulty": "Easy",
+            "time": "2 min",
+            "file": "package-lock.json"
+        })
+    
+    # Check for potential secret files
+    secret_patterns = ['secret', 'credential', 'password', 'private', 'key', 'token']
+    secret_files = [f for f in file_list if any(pattern in f.lower() for pattern in secret_patterns)
+                    and not any(safe in f.lower() for safe in ['.example', '.sample', '.template', 'test', 'mock'])]
+    if secret_files:
+        quick_wins.append({
+            "title": f"⚠️ Review {len(secret_files)} potential secret file(s)",
+            "description": "Files with 'secret', 'key', or 'credential' in name detected. Verify they don't contain real secrets.",
+            "difficulty": "Medium",
+            "time": "15 min",
+            "file": ", ".join(secret_files[:3])
         })
     
     # Check for dependency manifest
@@ -405,16 +462,77 @@ def smart_audit(owner: str, repo: str, file_list: list) -> dict:
         structure_score -= 2.0
     structure_score = round(max(0.0, structure_score), 1)
     
-    # Security score: start at 10, -4 if .env committed, -3 if no .gitignore, -3 if secrets/credentials in root
+    # Enhanced Security score: comprehensive security checks
     security_score = 10.0
+    security_issues = []
+    
+    # Critical: Committed .env file (high risk of exposed secrets)
     if has_exact_file(['.env']):
-        security_score -= 4.0
+        security_score -= 3.0
+        security_issues.append("Committed .env file detected")
+    
+    # Critical: Missing .gitignore (risk of committing sensitive files)
     if not has_exact_file(['.gitignore']):
-        security_score -= 3.0
-    secret_files = [f for f in root_files if 'secret' in f.lower() or 'credential' in f.lower()]
+        security_score -= 2.5
+        security_issues.append("Missing .gitignore")
+    
+    # High: Secret/credential files in root or anywhere
+    secret_patterns = ['secret', 'credential', 'password', 'private', 'key', 'token', 'api_key', 'apikey']
+    secret_files = [f for f in file_list if any(pattern in f.lower() for pattern in secret_patterns)
+                    and not any(safe in f.lower() for safe in ['.example', '.sample', '.template', 'test', 'mock', 'dummy'])]
     if secret_files:
-        security_score -= 3.0
-    security_score = round(max(0.0, security_score), 1)
+        security_score -= 2.0
+        security_issues.append(f"Potential secret files: {len(secret_files)} found")
+    
+    # High: Hardcoded credentials patterns in common config files
+    config_files = [f for f in file_list if any(ext in f.lower() for ext in ['config.json', 'config.js', 'config.py', 'settings.py', 'constants.py', 'constants.js'])]
+    if config_files and not has_exact_file(['.env.example', '.env.sample']):
+        security_score -= 1.5
+        security_issues.append("Config files without .env.example template")
+    
+    # Medium: Missing security-related files
+    if not has_exact_file(['SECURITY.md', 'SECURITY.txt', '.github/SECURITY.md']):
+        security_score -= 1.0
+        security_issues.append("No security policy (SECURITY.md)")
+    
+    # Medium: Dependency security (missing lock files)
+    has_package_json = has_exact_file(['package.json'])
+    has_requirements = has_exact_file(['requirements.txt'])
+    has_gemfile = has_exact_file(['Gemfile'])
+    
+    if has_package_json and not has_exact_file(['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml']):
+        security_score -= 0.5
+        security_issues.append("Missing package lock file (npm/yarn)")
+    
+    if has_requirements and not has_exact_file(['requirements.lock', 'Pipfile.lock', 'poetry.lock']):
+        security_score -= 0.3
+        security_issues.append("No Python dependency lock file")
+    
+    # Low: Exposed IDE/editor config with potential secrets
+    ide_files = [f for f in file_list if any(ide in f for ide in ['.vscode/settings.json', '.idea/', 'workspace.xml'])]
+    if ide_files:
+        security_score -= 0.5
+        security_issues.append("IDE config files committed (may contain paths/tokens)")
+    
+    # Low: Database files committed
+    db_files = [f for f in file_list if any(ext in f.lower() for ext in ['.db', '.sqlite', '.sqlite3', '.mdb'])
+                and 'test' not in f.lower() and 'example' not in f.lower()]
+    if db_files:
+        security_score -= 0.7
+        security_issues.append(f"Database files committed: {len(db_files)} found")
+    
+    # Bonus: Has security best practices
+    if has_exact_file(['SECURITY.md', '.github/SECURITY.md']):
+        security_score += 0.5
+    
+    if has_exact_file(['.env.example', '.env.sample', '.env.template']):
+        security_score += 0.5
+    
+    # Bonus: Has security scanning in CI/CD
+    if has_file(['dependabot.yml', 'snyk', 'security-scan', 'codeql']):
+        security_score += 0.5
+    
+    security_score = round(max(0.0, min(10.0, security_score)), 1)
     
     return {
         "quick_wins": quick_wins,

@@ -1,18 +1,21 @@
 ---
 applications:
 - name: codecompass
-  memory: 512M
-  instances: 1
+  memory: 1G
+  disk_quota: 512M
+  instances: 2
   buildpacks:
     - python_buildpack
-  command: uvicorn main:app --host 0.0.0.0 --port $PORT
+  command: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 2
   env:
     PYTHONUNBUFFERED: true
+    WORKERS: 2
   services: []
   routes:
-    - route: codecompass.mybluemix.net
+    - route: codecompass.us-south.cf.appdomain.cloud
   health-check-type: http
   health-check-http-endpoint: /health
-  timeout: 180
+  health-check-invocation-timeout: 10
+  timeout: 300
 
-# Made with Bob
+# Made with Bob - Optimized for IBM Cloud Code Engine
